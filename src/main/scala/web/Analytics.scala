@@ -45,7 +45,7 @@ object AnalyticsData {
 
   def createViews(rules: List[Rule]): List[View] = {
     List(
-      View("Channels", Left(rules.map(rule => TagLayout(rule, Some(Right(DimensionLayout(Dimension.source, None))))))),
+      View("Channels", Left(TagLayout(rules.head, Some(Right(DimensionLayout(Dimension.source, Some(Right(DimensionLayout(Dimension.keyword, None))))))):: rules.tail.map(rule => TagLayout(rule, Some(Right(DimensionLayout(Dimension.source, None))))))),
       View("Source / medium", Right(DimensionLayout(Dimension.sourceMedium, None)))
     )
   }

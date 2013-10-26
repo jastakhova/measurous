@@ -31,6 +31,7 @@ object Dimension {
   val sourceMedium = Dimension("sourceMedium")
   val source = Dimension("source")
   val network = Dimension("adDistributionNetwork")
+  val keyword = Dimension("keyword")
 
   def fromHeader(name: String) = Dimension(name.replaceAll("^ga:", ""))
 }
