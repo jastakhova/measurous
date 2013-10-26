@@ -28,6 +28,7 @@ case class Rule(name: String, dimension: Dimension, pattern: String) {
 
 object Dimension {
   val medium = Dimension("medium")
+  val sourceMedium = Dimension("sourceMedium")
   val source = Dimension("source")
   val network = Dimension("adDistributionNetwork")
 
@@ -46,11 +47,12 @@ case class DimensionLayout(val dimension: Dimension, inner: Option[Either[List[T
 
 case class View(name: String, layout: Either[List[TagLayout], DimensionLayout])
 
-case class Layout(layout: Either[List[TagLayout], DimensionLayout], parent: Option[Layout]) {
-  def moveInto(tagLayout: TagLayout): Option[Layout] = tagLayout.inner.map(layout => Layout(layout, Some(this)))
+case class Layout(layout: Either[List[TagLayout], DimensionLayout], parent: Option[Layout], restrictions: Restrictions) {
+  def moveInto(tagLayout: TagLayout): Option[Layout] =
+    tagLayout.inner.map(layout => Layout(layout, Some(this), restrictions.merge(tagLayout)))
 
-  def moveInto(dimensionLayout: DimensionLayout): Option[Layout] =
-    dimensionLayout.inner.map(layout => Layout(layout, Some(this)))
+  def moveInto(dimensionLayout: DimensionLayout, value: String): Option[Layout] =
+    dimensionLayout.inner.map(layout => Layout(layout, Some(this), restrictions.merge(dimensionLayout, value)))
 
   def getName = layout match {
     case Left(_) => "Tags"
@@ -76,4 +78,20 @@ object EnrichedRow {
   }
 }
 
-case class EnrichedRow(data: Map[Dimension, String], tags: List[String])
+case class EnrichedRow(data: Map[Dimension, String], tags: List[String]) {
+  def worksFor(restrictions: Restrictions): Boolean =
+    restrictions.tags.forall(tag => tags.contains(tag)) &&
+      restrictions.dimension2value.forall{case (dimension, value) => data.get(dimension) == Some(value)}
+}
+
+object Restrictions {
+  def empty = Restrictions(Nil, Map.empty)
+}
+
+case class Restrictions(tags: List[String], dimension2value: Map[Dimension, String]) {
+
+  def merge(tagLayout: TagLayout) = Restrictions(tagLayout.rule.name :: tags, dimension2value)
+
+  def merge(dimensionLayout: DimensionLayout, value: String) =
+    Restrictions(tags, dimension2value.updated(dimensionLayout.dimension, value))
+}

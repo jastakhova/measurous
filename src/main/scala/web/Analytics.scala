@@ -13,7 +13,17 @@ object AnalyticsData {
 
   val rules: List[Rule] = createChannelRules
   val views: List[View] = createViews(rules)
-  var currentLayout: Layout = Layout(views.head.layout, None)
+  var currentView: View = views.head
+  var currentLayout: Layout = Layout(currentView.layout, None, Restrictions.empty)
+
+  def setView(view: View) {
+    currentView = view
+    refreshLayout()
+  }
+
+  def refreshLayout() {
+    currentLayout = Layout(currentView.layout, None, Restrictions.empty)
+  }
 
   def createChannelRules: List[Rule] =
     List(
@@ -34,6 +44,9 @@ object AnalyticsData {
     )
 
   def createViews(rules: List[Rule]): List[View] = {
-    List(View("Channels", Left(rules.map(rule => TagLayout(rule, None)))))
+    List(
+      View("Channels", Left(rules.map(rule => TagLayout(rule, Some(Right(DimensionLayout(Dimension.source, None))))))),
+      View("Source / medium", Right(DimensionLayout(Dimension.sourceMedium, None)))
+    )
   }
 }

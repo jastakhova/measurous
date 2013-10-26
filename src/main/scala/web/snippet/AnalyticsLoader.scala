@@ -31,10 +31,12 @@ import js.JE.ValById
 import js.JsCmds.SetHtml
 import net.liftweb.http.SHtml._
 import net.liftweb.util.Helpers._
-import net.liftweb.http.js.JsCmds
+import js.{JsCmd, JsCmds}
 import xml.NodeSeq
 import web.AnalyticsData
 import model.{EnrichedRow, EnrichedData, Dimension}
+import com.google.api.client.util.Sets
+import net.liftweb.common.{Full, Box}
 
 /**
  * Main class for the Google Analytics API command line sample.
@@ -123,32 +125,71 @@ object AnalyticsLoader {
       def toGA(fields: List[String]) = fields.map("ga:" + _).mkString(",")
 
       client.get.data().ga().get("ga:" + profileId, startDate, endDate, toGA(fields))
-        .setDimensions(toGA(dimensions)).setSort("-" + toGA(List("visits"))).setMaxResults(100).execute()
+        .setDimensions(toGA(dimensions)).setSort("-" + toGA(List("visits"))).setMaxResults(400).execute()
   }
 
-  def formTable(enriched: EnrichedData): List[List[String]] = AnalyticsData.currentLayout.layout match {
-    case Left(tagLayouts) => enriched.data.groupBy(row => row.tags.intersect(tagLayouts.map(_.rule.name)))
-      .filter(!_._1.isEmpty).map{case (tags, rows) =>
-      tags.mkString(",") :: enriched.headers.map(header => rows.foldLeft(0){case (res, row) =>
-        res + row.data.get(header).getOrElse("0").toInt}).map(_.toString)}.toList
-    case Right(dimensionLayout) => enriched.data.map(row =>
-      (dimensionLayout.dimension :: enriched.headers).flatMap(dimension => row.data.get(dimension)))
+  def filter(enriched: EnrichedData) =
+    EnrichedData(enriched.headers, enriched.data.filter(row => row.worksFor(AnalyticsData.currentLayout.restrictions)))
+
+  def formTable(enriched: EnrichedData): List[List[String]] = {
+    val enrichedAndFiltered = filter(enriched)
+
+    AnalyticsData.currentLayout.layout match {
+      case Left(tagLayouts) => enrichedAndFiltered.data.groupBy(row => row.tags.intersect(tagLayouts.map(_.rule.name)))
+        .filter(!_._1.isEmpty).map{case (tags, rows) =>
+        tags.mkString(",") :: enriched.headers.map(header => rows.foldLeft(0){case (res, row) =>
+          res + row.data.get(header).getOrElse("0").toInt}).map(_.toString)}.toList
+      case Right(dimensionLayout) => enrichedAndFiltered.data.groupBy(row => row.data.get(dimensionLayout.dimension).get)
+        .map{case (value, rows) =>
+          value :: rows.flatMap(_.tags).toSet.mkString(",") ::
+            enriched.headers.map(header => rows.foldLeft(0){case (res, row) =>
+              res + row.data.get(header).getOrElse("0").toInt}).map(_.toString)}.toList
+    }
   }
 
-  def dataBoardNode(data: GaData) = {
+  def reload(data: GaData): JsCmd = {
+    SetHtml("dataBoard", dataBoardNode(data)) &
+      SetHtml("backButton", backButtonNode(data)) &
+      SetHtml("backButton2", backButtonNode(data)) &
+      SetHtml("selectView", selectViewNode(data))
+  }
+
+  def dataBoardNode(data: GaData): NodeSeq = {
       val enriched = EnrichedData.fromRaw(data)
 
       <table class="table">
       <tr> <td class="notop"><strong>{AnalyticsData.currentLayout.getName}</strong></td>
         {
-          enriched.headers.map(header => <td class="notop"><strong>{header.getUIName}</strong></td>)
+          val headers = enriched.headers.map(header => <td class="notop"><strong>{header.getUIName}</strong></td>)
+          if (AnalyticsData.currentLayout.layout.isRight)
+            <td class="notop"><strong>Tags</strong></td> :: headers
+          else
+            headers
         }
       </tr>
       {
-        formTable(enriched).take(10).map(row =>
+        formTable(enriched).map(row =>
           <tr>
             {
-              row.map(value => <td>{value}</td>)
+              val firstColumn = AnalyticsData.currentLayout.layout match {
+                case Left(tagLayout) => tagLayout.filter(_.rule.name == row.head).head.inner match {
+                  case Some(_) => <td>{SHtml.a(() => {
+                    AnalyticsData.currentLayout =
+                      AnalyticsData.currentLayout.moveInto(tagLayout.filter(_.rule.name == row.head).head).get
+                    reload(data)
+                  }, <i>{row.head}</i>)}</td>
+                  case None => <td>{row.head}</td>
+                }
+                case Right(dimensionLayout) => dimensionLayout.inner match {
+                  case Some(_) => <td>{SHtml.a(() => {
+                    AnalyticsData.currentLayout =
+                      AnalyticsData.currentLayout.moveInto(dimensionLayout, row.head).get
+                    reload(data)
+                  }, <i>{row.head}</i>)}</td>
+                  case None => <td>{row.head}</td>
+                }
+              }
+              firstColumn :: row.tail.map(value => <td>{value}</td>)
             }
           </tr>
         )
@@ -156,15 +197,31 @@ object AnalyticsLoader {
     </table>
   }
 
+  def backButtonNode(data: GaData) = ajaxButton(<i class="icon-backward"></i>, () => {
+    AnalyticsData.currentLayout = AnalyticsData.currentLayout.parent.get
+    reload(data)
+  }, "class" -> ("btn" + (if (AnalyticsData.currentLayout.parent.isEmpty) " disabled" else "")))
+
+  def selectViewNode(data: GaData) = ajaxSelect(
+    AnalyticsData.views.map(view => (view.name, view.name)),
+    Full(AnalyticsData.currentView.name),
+    (viewName) => {
+      AnalyticsData.setView(AnalyticsData.views.find(_.name == viewName).get)
+      reload(data)
+    }, "style" -> "margin-top: 11px; margin-left: 10px;")
+
   def startDate = "2013-09-25"
   def endDate = "2013-10-25"
 
   def render = {
-    val data = load(startDate, endDate, List("visits", "visitors", "bounces"), List("source", "keyword", "medium"))
+    val data = load(startDate, endDate, List("visits", "visitors", "bounces"), List("source", "keyword", "medium", "sourceMedium"))
     "@dataBoard" #> dataBoardNode(data) &
     "@startDate" #> text(startDate, ValById(_), "type" -> "date") &
     "@endDate" #> text(endDate, ValById(_), "type" -> "date") &
-    "@dataName" #> <h3>Report for profile "www.keplers.com"</h3>
+    "@dataName" #> <h3 style="margin-bottom: 30px">Report for profile "www.keplers.com"</h3> &
+    "@backButton" #> backButtonNode(data) &
+    "@backButton2" #> backButtonNode(data) &
+    "@selectView" #> selectViewNode(data)
   }
 
   def main(args: Array[String]) {
