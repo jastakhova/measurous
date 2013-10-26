@@ -1,11 +1,18 @@
 package model
 
 import scala._
+import model._
+import com.google.api.services.analytics.Analytics
+import web.AnalyticsData
+import com.google.api.services.analytics.model.GaData
+
+import scala.collection.JavaConversions._
 import model.TagLayout
-import model.Rule
+import model.Layout
 import model.DimensionLayout
-import model.TagLayout
 import model.Rule
+import scala.Some
+
 
 /**
  * Created with IntelliJ IDEA.
@@ -15,7 +22,8 @@ import model.Rule
 case class Rule(name: String, dimension: Dimension, pattern: String) {
 
   // Rule is applied to the row of the dimensions and adds its own dimensions to the row
-  def apply(row : List[String]): List[String] = row
+  def apply(row : Map[Dimension, String]): Option[String] =
+    row.get(dimension).filter(_.contains(pattern)).map(_ => name)
 }
 
 object Dimension {
@@ -49,3 +57,23 @@ case class Layout(layout: Either[List[TagLayout], DimensionLayout], parent: Opti
     case Right(dimentionLayout) => dimentionLayout.dimension.getUIName
   }
 }
+
+object EnrichedData {
+
+  def fromRaw(data: GaData) = EnrichedData(
+    data.getColumnHeaders.filter(_.getColumnType == "METRIC").map(header => Dimension.fromHeader(header.getName)).toList,
+    data.getRows.map(row => EnrichedRow.fromRaw(data.getColumnHeaders.map(_.getName).toList, row.toList)).toList
+  )
+}
+
+case class EnrichedData(headers: List[Dimension], data: List[EnrichedRow])
+
+object EnrichedRow {
+  def fromRaw(headers: List[String], data: List[String]) = {
+    val mappedData = headers.zip(data).foldLeft(Map[Dimension, String]())
+      {case (res, (header, data)) => res.updated(Dimension.fromHeader(header), data)}
+    EnrichedRow(mappedData, AnalyticsData.rules.flatMap(_.apply(mappedData)).toSet.toList)
+  }
+}
+
+case class EnrichedRow(data: Map[Dimension, String], tags: List[String])

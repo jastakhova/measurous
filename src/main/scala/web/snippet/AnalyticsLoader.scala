@@ -34,13 +34,13 @@ import net.liftweb.util.Helpers._
 import net.liftweb.http.js.JsCmds
 import xml.NodeSeq
 import web.AnalyticsData
-import model.Dimension
+import model.{EnrichedRow, EnrichedData, Dimension}
 
 /**
  * Main class for the Google Analytics API command line sample.
  * Demonstrates how to make an authenticated API call using OAuth 2 helper classes.
  */
-class AnalyticsLoader {
+object AnalyticsLoader {
 
   /**
    * Be sure to specify the name of your application. If the application name is {@code null} or
@@ -123,23 +123,51 @@ class AnalyticsLoader {
       def toGA(fields: List[String]) = fields.map("ga:" + _).mkString(",")
 
       client.get.data().ga().get("ga:" + profileId, startDate, endDate, toGA(fields))
-        .setDimensions(toGA(dimensions)).setMaxResults(10).execute()
+        .setDimensions(toGA(dimensions)).setSort("-" + toGA(List("visits"))).setMaxResults(100).execute()
   }
 
-//  <td class="notop"><strong>{AnalyticsData.currentLayout.getName}</strong></td>
+  def formTable(enriched: EnrichedData): List[List[String]] = AnalyticsData.currentLayout.layout match {
+    case Left(tagLayouts) => enriched.data.groupBy(row => row.tags.intersect(tagLayouts.map(_.rule.name)))
+      .filter(!_._1.isEmpty).map{case (tags, rows) =>
+      tags.mkString(",") :: enriched.headers.map(header => rows.foldLeft(0){case (res, row) =>
+        res + row.data.get(header).getOrElse("0").toInt}).map(_.toString)}.toList
+    case Right(dimensionLayout) => enriched.data.map(row =>
+      (dimensionLayout.dimension :: enriched.headers).flatMap(dimension => row.data.get(dimension)))
+  }
+
   def dataBoardNode(data: GaData) = {
+      val enriched = EnrichedData.fromRaw(data)
+
       <table class="table">
-      <tr>
+      <tr> <td class="notop"><strong>{AnalyticsData.currentLayout.getName}</strong></td>
         {
-          data.getColumnHeaders./*filter(_.getColumnType == "METRIC").*/map(header =>
-            <td class="notop"><strong>{Dimension.fromHeader(header.getName).getUIName}</strong></td>)
+          enriched.headers.map(header => <td class="notop"><strong>{header.getUIName}</strong></td>)
         }
       </tr>
-      {data.getRows.map(row => <tr>{row.map(value => <td class="notop">{value}</td>)}</tr>)}
+      {
+        formTable(enriched).take(10).map(row =>
+          <tr>
+            {
+              row.map(value => <td>{value}</td>)
+            }
+          </tr>
+        )
+      }
     </table>
   }
 
+  def startDate = "2013-09-25"
+  def endDate = "2013-10-25"
+
   def render = {
-    "@dataBoard" #> dataBoardNode(load("2013-10-01", "2013-10-05", List("visits"), List("source", "keyword")))
+    val data = load(startDate, endDate, List("visits", "visitors", "bounces"), List("source", "keyword", "medium"))
+    "@dataBoard" #> dataBoardNode(data) &
+    "@startDate" #> text(startDate, ValById(_), "type" -> "date") &
+    "@endDate" #> text(endDate, ValById(_), "type" -> "date") &
+    "@dataName" #> <h3>Report for profile "www.keplers.com"</h3>
+  }
+
+  def main(args: Array[String]) {
+    println(formTable(EnrichedData.fromRaw(load(startDate, endDate, List("visits"), List("source", "keyword", "medium")))))
   }
 }
