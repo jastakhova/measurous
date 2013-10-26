@@ -1,0 +1,12 @@
+!.gitkeep 
+.cache
+.classpath
+.idea
+.idea_modules
+.project
+.settings
+/lib
+/project/project
+/project/target
+/target
+*~
